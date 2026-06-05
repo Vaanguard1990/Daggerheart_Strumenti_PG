@@ -2287,6 +2287,8 @@ export default function App() {
             // Applica tappa se necessario
             if (isTappa && !tappaFatta) {
               competenzaDelta += 1;
+              // Tappa del Cammino: +1 Esperienza (mod +2) sulla scheda.
+              updates.esperienze = [...(pg.esperienze || []), { desc: "", bonus: 2 }];
               nuoviAv.tappe = { ...(av.tappe||{}), [tappaKey]: true };
               if ([5, 8].includes(nuovoLv)) {
                 nuoviAv.trattiMarcati = [];
