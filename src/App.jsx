@@ -673,6 +673,7 @@ const AVANZAMENTI_RANGO = {
     { id:"esperienze",  caselle:2, label:"Bonus +1 a due Esperienze",   desc:"Scegliete due Esperienze sulla scheda e ottenete +1 permanente a ciascuna." },
     { id:"carta",       caselle:1, label:"Carta dominio aggiuntiva",    desc:"Scegliete una carta dominio di livello ≤ vostro (max Lv4) da un dominio a cui avete accesso." },
     { id:"evasione",    caselle:1, label:"Bonus +1 all'Evasione",       desc:"Guadagnate bonus +1 permanente all'Evasione." },
+    { id:"sottoclasse", caselle:1, label:"Carta migliorata sottoclasse",desc:"Prendete la Specializzazione della vostra sottoclasse." },
   ],
   3: [ // Rango 3: Lv 5-7
     { id:"tratti",      caselle:2, label:"Bonus +1 a due tratti",      desc:"Scegliete due tratti non marcati, ottenete +1 permanente a ciascuno e marcateli. Non potete aumentarli di nuovo fino al prossimo reset (Lv8)." },
@@ -1608,6 +1609,17 @@ const nuovoPG = () => ({
 // CALCOLO BONUS STATISTICHE DA ABILITÀ, CARTE E ARMI
 // Restituisce delta rispetto ai valori base del personaggio.
 // ─────────────────────────────────────────────────────────────────────────────
+// Quante volte è stato preso l'avanzamento "Carta migliorata sottoclasse".
+// 1ª volta → Specializzazione, 2ª volta → Maestria (regole ufficiali).
+const contaAvanzamentoSottoclasse = (pg) => {
+  const caselle = pg.avanzamenti?.caselle || {};
+  return ["r2","r3","r4"].reduce((s,k) => s + (caselle[k]?.sottoclasse || 0), 0);
+};
+const sottoclasseSbloccata = (pg) => {
+  const n = contaAvanzamentoSottoclasse(pg);
+  return { spec: n >= 1, maestria: n >= 2 };
+};
+
 const calcolaBonusStatistiche = (pg) => {
   const lv   = pg.livello    || 1;
   const comp = pg.competenza || 1;
@@ -1630,8 +1642,9 @@ const calcolaBonusStatistiche = (pg) => {
 
   // ── 1. PRIVILEGI SOTTOCLASSE ────────────────────────────────────────────
   if (sotto) {
-    const checkPriv = (lista, soglia) => {
-      if (lv < soglia) return;
+    const sb = sottoclasseSbloccata(pg);
+    const checkPriv = (lista, sbloccato) => {
+      if (!sbloccato) return;
       for (const p of lista) {
         switch (p.nome) {
           case "Saldo":          add("Saldo (sottoclasse)",         0, 1, 1); break;
@@ -1647,9 +1660,9 @@ const calcolaBonusStatistiche = (pg) => {
         }
       }
     };
-    checkPriv(sotto.base    || [], 1);
-    checkPriv(sotto.spec    || [], sotto.livelloSpec    || 4);
-    checkPriv(sotto.maestria|| [], sotto.livelloMaestria|| 7);
+    checkPriv(sotto.base    || [], true);
+    checkPriv(sotto.spec    || [], sb.spec);
+    checkPriv(sotto.maestria|| [], sb.maestria);
   }
 
   // ── 2. TRATTO RETAGGIO (ORIGINI) ────────────────────────────────────────
@@ -1704,15 +1717,15 @@ const calcolaBonusStatistiche = (pg) => {
 const toggleDisponibili = (pg) => {
   const dot   = pg.carteDotazione || [];
   const sotto = SOTTOCLASSI[pg.sottoclasse] || null;
-  const lv    = pg.livello || 1;
   const res   = [];
 
+  const sb = sottoclasseSbloccata(pg);
   const hasPriv = (nome) => {
     if (!sotto) return false;
     const all = [
       ...(sotto.base     || []),
-      ...((lv >= (sotto.livelloSpec    || 4)) ? sotto.spec     || [] : []),
-      ...((lv >= (sotto.livelloMaestria|| 7)) ? sotto.maestria || [] : []),
+      ...(sb.spec     ? sotto.spec     || [] : []),
+      ...(sb.maestria ? sotto.maestria || [] : []),
     ];
     return all.some(p => p.nome === nome);
   };
@@ -1753,6 +1766,8 @@ export default function App() {
   const stili = makeStili(COLORI);
   const [toastSalvato, setToastSalvato] = useState(false);
   const [showAvanzamento, setShowAvanzamento] = useState(false);
+  // Tratti selezionati nel selettore dell'avanzamento "+1 a due tratti".
+  const [avTrattiSel, setAvTrattiSel] = useState([]);
 
   // ── MODALITÀ SERVER (LAN) ─────────────────────────────────────
   // Rilevamento URL: ?player = modalità giocatore  |  ?dm=PASSWORD = modalità DM
@@ -1887,6 +1902,11 @@ export default function App() {
     window.addEventListener("resize", fn);
     return () => window.removeEventListener("resize", fn);
   }, []);
+
+  // Azzera la selezione tratti quando il modal di avanzamento si chiude.
+  useEffect(() => {
+    if (!showAvanzamento) setAvTrattiSel([]);
+  }, [showAvanzamento]);
 
   // Sincronizza tema con body background e localStorage
   useEffect(() => {
@@ -2033,6 +2053,7 @@ export default function App() {
 
   const classeDati = CLASSI[pg.classe];
   const sottoclasseDati = SOTTOCLASSI[pg.sottoclasse];
+  const sbSotto = sottoclasseSbloccata(pg);  // Specializzazione/Maestria sbloccate via avanzamento
   const bs  = calcolaBonusStatistiche(pg);   // bonus statistiche calcolati
   const tog = toggleDisponibili(pg);          // toggle disponibili per questo pg
 
@@ -2233,6 +2254,10 @@ export default function App() {
         const opzioni  = AVANZAMENTI_RANGO[rango] || [];
         const av       = pg.avanzamenti || { caselle:{r2:{},r3:{},r4:{}}, tappe:{lv2:false,lv5:false,lv8:false}, trattiMarcati:[] };
         const caselle  = av.caselle?.[rangoKey] || {};
+        // Tratti già aumentati e "marcati" in questo rango: non riselezionabili
+        // fino al rango successivo (lo "sblocco" alle tappe Lv5/8 è automatico
+        // perché ogni rango ha la propria lista).
+        const trattiMarcatiRango = av.trattiMarcatiRango?.[rangoKey] || [];
 
         // Conta caselle già usate in questo rango (per il limite 2 per livello)
         // Ogni level-up permette 2 scelte. Le scelte sono accumulate per rango.
@@ -2255,13 +2280,16 @@ export default function App() {
         // Stato locale per la scelta corrente (tratti da aumentare se si sceglie "tratti")
         // Usiamo un approccio semplice: selezione immediata
 
-        const applicaScelta = (id) => {
+        // extra.traits: i due tratti scelti per l'avanzamento "+1 a due tratti".
+        const applicaScelta = (id, extra = {}) => {
           const op = opzioni.find(o => o.id === id);
           // Le opzioni "doppia" (Competenza, Multiclasse) consumano entrambe
           // le scelte del livello e marcano 2 caselle in un colpo solo.
           const costo = op?.doppia ? 2 : 1;
           if (scelte2 + costo > 2) return;
           if (caselleUsate(id) + costo > caselleMax(id)) return;
+          // L'avanzamento sui tratti richiede esattamente due tratti scelti.
+          if (id === "tratti" && (!extra.traits || extra.traits.length !== 2)) return;
 
           const nuoveScelte  = op?.doppia ? [...scelteLiv, id, id] : [...scelteLiv, id];
           const nuoveCaselle = { ...caselle, [id]: (caselle[id]||0)+costo };
@@ -2281,6 +2309,21 @@ export default function App() {
             scelteLivello: { ...(av.scelteLivello||{}), [nuovoLv]: nuoveScelte },
           };
 
+          // "+1 a due tratti": aumenta e marca i due tratti scelti per il rango.
+          if (id === "tratti") {
+            const nuoviTratti = { ...pg.tratti };
+            extra.traits.forEach(t => { nuoviTratti[t] = (nuoviTratti[t]||0) + 1; });
+            updates.tratti = nuoviTratti;
+            nuoviAv.trattiMarcatiRango = {
+              ...(av.trattiMarcatiRango||{}),
+              [rangoKey]: [...trattiMarcatiRango, ...extra.traits],
+            };
+            nuoviAv.trattiSceltiLivello = {
+              ...(av.trattiSceltiLivello||{}),
+              [nuovoLv]: [...(av.trattiSceltiLivello?.[nuovoLv]||[]), ...extra.traits],
+            };
+          }
+
           // Se ha scelto 2 opzioni → sali di livello automaticamente
           const completato = nuoveScelte.length >= 2;
           if (completato) {
@@ -2290,9 +2333,6 @@ export default function App() {
               // Tappa del Cammino: +1 Esperienza (mod +2) sulla scheda.
               updates.esperienze = [...(pg.esperienze || []), { desc: "", bonus: 2 }];
               nuoviAv.tappe = { ...(av.tappe||{}), [tappaKey]: true };
-              if ([5, 8].includes(nuovoLv)) {
-                nuoviAv.trattiMarcati = [];
-              }
             }
             updates.livello = nuovoLv;
           }
@@ -2305,6 +2345,7 @@ export default function App() {
           setPersonaggi(nuoviPg);
           salvaSuStorage(nuoviPg);
           wsSendChar(nuoviPg);
+          setAvTrattiSel([]);
 
           if (completato) setShowAvanzamento(false);
         };
@@ -2326,6 +2367,20 @@ export default function App() {
             caselle: { ...(av.caselle||{}), [rangoKey]: nuoveCaselle },
             scelteLivello: { ...(av.scelteLivello||{}), [nuovoLv]: nuoveScelte },
           };
+
+          // Ripristina i tratti aumentati con questo avanzamento.
+          if (id === "tratti") {
+            const trattiDaAnnullare = av.trattiSceltiLivello?.[nuovoLv] || [];
+            const nuoviTratti = { ...pg.tratti };
+            trattiDaAnnullare.forEach(t => { nuoviTratti[t] = Math.max(0,(nuoviTratti[t]||0) - 1); });
+            updates.tratti = nuoviTratti;
+            nuoviAv.trattiMarcatiRango = {
+              ...(av.trattiMarcatiRango||{}),
+              [rangoKey]: trattiMarcatiRango.filter(t => !trattiDaAnnullare.includes(t)),
+            };
+            nuoviAv.trattiSceltiLivello = { ...(av.trattiSceltiLivello||{}), [nuovoLv]: [] };
+          }
+
           const nuovoPg = { ...pg, ...updates, avanzamenti: nuoviAv };
           const nuoviPg = personaggi.map(p => p.id === nuovoPg.id ? nuovoPg : p);
           setPersonaggi(nuoviPg);
@@ -2395,6 +2450,17 @@ export default function App() {
                     const bloccata = !scelta && scelte2 >= 2;
                     // Un'opzione già scelta resta cliccabile (per annullarla) anche se "piena".
                     const disabile = (piena && !scelta) || bloccata;
+                    const isTratti = op.id === "tratti";
+                    // Il selettore tratti compare quando l'opzione è scelibile.
+                    const mostraPicker = isTratti && !scelta && !disabile;
+                    const trattiScelti = av.trattiSceltiLivello?.[nuovoLv] || [];
+
+                    const onCardClick = () => {
+                      if (disabile) return;
+                      if (scelta) { annullaScelta(op.id); return; }
+                      if (isTratti) return; // i tratti si applicano col pulsante Conferma
+                      applicaScelta(op.id);
+                    };
 
                     return (
                       <div key={op.id} style={{
@@ -2403,10 +2469,10 @@ export default function App() {
                         background: scelta ? `${COLORI.oro}12` : piena ? `${COLORI.bordo}20` : COLORI.carta,
                         padding:"8px 10px",
                         opacity: piena && !scelta ? 0.5 : 1,
-                        cursor: disabile ? "default" : "pointer",
+                        cursor: (disabile || mostraPicker) ? "default" : "pointer",
                         display:"flex", alignItems:"flex-start", gap:"8px",
                       }}
-                        onClick={() => !disabile && (scelta ? annullaScelta(op.id) : applicaScelta(op.id))}
+                        onClick={onCardClick}
                       >
                         {/* Caselle checkbox */}
                         <div style={{ display:"flex", gap:"3px", flexShrink:0, marginTop:"2px" }}>
@@ -2425,6 +2491,67 @@ export default function App() {
                           </div>
                           <div style={{ fontSize:"0.65rem", color:COLORI.testoSec, lineHeight:1.4 }}>{op.desc}</div>
                           {piena && <div style={{ fontSize:"0.62rem", color:COLORI.bordo, marginTop:"2px" }}>Tutte le caselle di questo rango sono state marcate.</div>}
+
+                          {/* Tratti scelti (quando l'avanzamento è già stato preso) */}
+                          {isTratti && scelta && trattiScelti.length > 0 && (
+                            <div style={{ marginTop:"5px", display:"flex", gap:"4px", flexWrap:"wrap" }}>
+                              {trattiScelti.map(t => (
+                                <span key={t} style={{ fontSize:"0.62rem", background:`${COLORI.oro}22`, border:`1px solid ${COLORI.oro}60`, borderRadius:"3px", padding:"1px 7px", color:COLORI.oroChiaro }}>
+                                  {t} +1
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Selettore: scegli esattamente 2 tratti non marcati */}
+                          {mostraPicker && (
+                            <div style={{ marginTop:"7px" }} onClick={e => e.stopPropagation()}>
+                              <div style={{ fontSize:"0.6rem", color:COLORI.testoSec, marginBottom:"5px" }}>
+                                Scegli 2 tratti ({avTrattiSel.length}/2):
+                              </div>
+                              <div style={{ display:"flex", flexWrap:"wrap", gap:"4px", marginBottom:"6px" }}>
+                                {TRATTI_LISTA.map(t => {
+                                  const marcato = trattiMarcatiRango.includes(t);
+                                  const sel = avTrattiSel.includes(t);
+                                  return (
+                                    <button key={t} disabled={marcato}
+                                      onClick={() => {
+                                        if (marcato) return;
+                                        setAvTrattiSel(prev =>
+                                          prev.includes(t) ? prev.filter(x => x !== t)
+                                          : prev.length >= 2 ? prev
+                                          : [...prev, t]
+                                        );
+                                      }}
+                                      title={marcato ? "Già aumentato in questo rango" : ""}
+                                      style={{
+                                        fontSize:"0.62rem", borderRadius:"3px", padding:"3px 8px",
+                                        cursor: marcato ? "not-allowed" : "pointer",
+                                        background: sel ? COLORI.bordoOro : "transparent",
+                                        color: marcato ? COLORI.bordo : sel ? COLORI.sfondo : COLORI.testoSec,
+                                        border: `1px solid ${sel ? COLORI.bordoOro : COLORI.bordo}`,
+                                        opacity: marcato ? 0.45 : 1,
+                                        textDecoration: marcato ? "line-through" : "none",
+                                        fontFamily: "'Crimson Pro', Georgia, serif",
+                                      }}>
+                                      {t} ({(pg.tratti?.[t]||0) >= 0 ? "+" : ""}{pg.tratti?.[t]||0})
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <button
+                                disabled={avTrattiSel.length !== 2}
+                                onClick={() => applicaScelta("tratti", { traits: avTrattiSel })}
+                                style={{ ...stili.btnSmall,
+                                  background: avTrattiSel.length === 2 ? COLORI.verde : "transparent",
+                                  color: avTrattiSel.length === 2 ? "#fff" : COLORI.testoSec,
+                                  borderColor: avTrattiSel.length === 2 ? COLORI.verde : COLORI.bordo,
+                                  cursor: avTrattiSel.length === 2 ? "pointer" : "not-allowed",
+                                  fontWeight:"bold", padding:"4px 12px" }}>
+                                ✓ Conferma +1/+1
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -2996,7 +3123,9 @@ export default function App() {
               };
               const tierCorrente = TIER_DA_LIVELLO(pg.livello || 1);
               const armiDisp = ARMI.filter(a => !a.custom && a.t === tierCorrente && a.c === (isPrimaria ? "P" : "S"));
-              const dadoLabel = arma.d ? (arma.b > 0 ? `${arma.d}+${arma.b}` : arma.d) : "—";
+              // Il numero di dadi di danno è pari alla Competenza (es. Comp 2 → 2d6).
+              const comp = pg.competenza || 1;
+              const dadoLabel = arma.d ? `${comp}${arma.d}${arma.b > 0 ? `+${arma.b}` : ""}` : "—";
               const dannoColor = arma.m ? "#6060cc" : COLORI.ink;
               return (
                 <div key={slot} style={{ marginBottom:"10px", paddingBottom:"10px", borderBottom: slot==="armaPrimaria" ? `1px solid ${COLORI.bordo}` : "none" }}>
@@ -3182,8 +3311,8 @@ export default function App() {
                     </div>
                   ))}
 
-                  {pg.livello >= sottoclasseDati.livelloSpec && <>
-                    <div style={{ marginTop: "10px", marginBottom: "4px", color: COLORI.testoSec, fontSize: "0.75rem", letterSpacing: "0.1em" }}>SPECIALIZZAZIONE (Lv{sottoclasseDati.livelloSpec})</div>
+                  {sbSotto.spec && <>
+                    <div style={{ marginTop: "10px", marginBottom: "4px", color: COLORI.testoSec, fontSize: "0.75rem", letterSpacing: "0.1em" }}>SPECIALIZZAZIONE</div>
                     {sottoclasseDati.spec.map(p => (
                       <div key={p.nome} style={{ ...stili.badge, cursor: "pointer", borderColor: COLORI.bordoOro }}
                         onClick={() => setPopup({ nome: p.nome, descrizione: p.descrizione, categoria: "Specializzazione" })}>
@@ -3193,8 +3322,8 @@ export default function App() {
                     ))}
                   </>}
 
-                  {pg.livello >= sottoclasseDati.livelloMaestria && <>
-                    <div style={{ marginTop: "10px", marginBottom: "4px", color: COLORI.oro, fontSize: "0.75rem", letterSpacing: "0.1em" }}>✦ MAESTRIA (Lv{sottoclasseDati.livelloMaestria})</div>
+                  {sbSotto.maestria && <>
+                    <div style={{ marginTop: "10px", marginBottom: "4px", color: COLORI.oro, fontSize: "0.75rem", letterSpacing: "0.1em" }}>✦ MAESTRIA</div>
                     {sottoclasseDati.maestria.map(p => (
                       <div key={p.nome} style={{ ...stili.badgeOro, cursor: "pointer" }}
                         onClick={() => setPopup({ nome: p.nome, descrizione: p.descrizione, categoria: "Maestria" })}>
@@ -3204,14 +3333,14 @@ export default function App() {
                     ))}
                   </>}
 
-                  {pg.livello < sottoclasseDati.livelloSpec && (
+                  {!sbSotto.spec && (
                     <div style={{ color: COLORI.testoSec, fontSize: "0.8rem", fontStyle: "italic", marginTop: "8px" }}>
-                      Specializzazione disponibile al livello {sottoclasseDati.livelloSpec}
+                      Specializzazione: sbloccala scegliendo l'avanzamento «Carta migliorata sottoclasse» (da Lv 2).
                     </div>
                   )}
-                  {pg.livello < sottoclasseDati.livelloMaestria && pg.livello >= sottoclasseDati.livelloSpec && (
+                  {sbSotto.spec && !sbSotto.maestria && (
                     <div style={{ color: COLORI.testoSec, fontSize: "0.8rem", fontStyle: "italic", marginTop: "8px" }}>
-                      Maestria disponibile al livello {sottoclasseDati.livelloMaestria}
+                      Maestria: sbloccala con un secondo avanzamento «Carta migliorata sottoclasse» (da Lv 5).
                     </div>
                   )}
                 </>}
@@ -3716,8 +3845,10 @@ export default function App() {
                             {aperto && (
                               <div style={{ border: `1px solid ${COLORI.bordo}`, borderTop:"none", borderRadius:"0 0 6px 6px", padding:"8px" }}>
                                 {forme.map(f => {
+                                  // Anche in Forma Bestiale i dadi di danno sono pari alla Competenza.
+                                  const compForma = pg.competenza || 1;
                                   const atkLabel = f.atk.d && f.atk.d !== "—"
-                                    ? (f.atk.b > 0 ? `${f.atk.d}+${f.atk.b}` : f.atk.d)
+                                    ? `${compForma}${f.atk.d}${f.atk.b > 0 ? `+${f.atk.b}` : ""}`
                                     : null;
                                   return (
                                     <div key={f.nome} style={{ background:COLORI.cartaChiara, border:`1px solid ${COLORI.bordo}`, borderRadius:"6px", padding:"10px", marginBottom:"8px" }}>
@@ -3882,8 +4013,14 @@ export default function App() {
                               onChange={e => aggCmp("attacco", { ...cmp.attacco, desc: e.target.value })} />
                           </div>
                         </div>
+                        <div style={{ marginTop:"8px", display:"flex", alignItems:"center", gap:"8px", flexWrap:"wrap" }}>
+                          <span style={{ background:COLORI.bordoOro, color:COLORI.sfondo, borderRadius:"3px", padding:"2px 10px", fontSize:"0.82rem", fontWeight:"bold" }}>
+                            🎲 {pg.competenza || 1}{cmp.attacco?.dado || "d6"}
+                          </span>
+                          <span style={{ fontSize:"0.7rem", color:COLORI.testoSec }}>danni ({cmp.attacco?.portata || "Mischia"})</span>
+                        </div>
                         <div style={{ fontSize:"0.68rem", color:COLORI.testoSec, marginTop:"6px" }}>
-                          Usa la tua Competenza + dado del compagno. Il compagno eredita i tuoi bonus (es. Focus del Ranger).
+                          Il numero di dadi è pari alla tua Competenza. Il compagno eredita i tuoi bonus (es. Focus del Ranger).
                         </div>
                       </div>
 
