@@ -1,0 +1,30 @@
+# Dipendenze
+node_modules/
+
+# Build
+dist/
+dist-electron/
+
+# Log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+
+# Cache strumenti
+.vite/
+.cache/
+
+# Ambiente
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+Thumbs.db
