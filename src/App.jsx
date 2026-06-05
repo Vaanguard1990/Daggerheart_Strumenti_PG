@@ -1574,7 +1574,7 @@ const nuovoPG = () => ({
   speranza: 0,
   paura: 0,
   competenza: 1,
-  esperienza: ["", "", ""],
+  esperienze: [],
   avanzamenti: {
     // caselle[rango][opzione] = array di bool (quante caselle marcate)
     caselle: { r2:{}, r3:{}, r4:{} },
@@ -1736,9 +1736,7 @@ const toggleDisponibili = (pg) => {
 // COMPONENTE TAB GIOCATORI (dentro sezione DM)
 // ============================================================
 export default function App() {
-  const [modalita, setModalita] = useState(() => {
-    try { return "pg"; } catch { return "selezione"; }
-  });
+  const [modalita, setModalita] = useState("pg");
   const [personaggi, setPersonaggi] = useState([]);
   const [pgSel, setPgSel] = useState(null);
   const [popup, setPopup] = useState(null);
@@ -1936,9 +1934,10 @@ export default function App() {
     setPersonaggi(prev => {
       const nuova = prev.map(pg => pg.id === pgSel ? { ...pg, [campo]: { ...pg[campo], [sotto]: valore } } : pg);
       salvaSuStorage(nuova);
+      wsSendChar(nuova);
       return nuova;
     });
-  }, [pgSel]);
+  }, [pgSel, wsSendChar]);
 
   const pg = personaggi.find(p => p.id === pgSel);
 
@@ -2257,24 +2256,24 @@ export default function App() {
         // Usiamo un approccio semplice: selezione immediata
 
         const applicaScelta = (id) => {
-          if (scelte2 >= 2) return;
-          if (opzionePiena(id)) return;
+          const op = opzioni.find(o => o.id === id);
+          // Le opzioni "doppia" (Competenza, Multiclasse) consumano entrambe
+          // le scelte del livello e marcano 2 caselle in un colpo solo.
+          const costo = op?.doppia ? 2 : 1;
+          if (scelte2 + costo > 2) return;
+          if (caselleUsate(id) + costo > caselleMax(id)) return;
 
-          const nuoveScelte = [...scelteLiv, id];
-          const nuoveCaselle = { ...caselle, [id]: (caselle[id]||0)+1 };
+          const nuoveScelte  = op?.doppia ? [...scelteLiv, id, id] : [...scelteLiv, id];
+          const nuoveCaselle = { ...caselle, [id]: (caselle[id]||0)+costo };
 
           let updates = {};
+          let competenzaDelta = 0;
 
           // Applica effetto immediato
-          if (id === "pf") {
-            updates.pf = { ...pg.pf, max: (pg.pf?.max||0)+1 };
-          }
-          if (id === "stress") {
-            updates.stress = { ...pg.stress, max: (pg.stress?.max||0)+1 };
-          }
-          if (id === "evasione") {
-            updates.evasione = (pg.evasione||0)+1;
-          }
+          if (id === "pf")         updates.pf = { ...pg.pf, max: (pg.pf?.max||0)+1 };
+          if (id === "stress")     updates.stress = { ...pg.stress, max: (pg.stress?.max||0)+1 };
+          if (id === "evasione")   updates.evasione = (pg.evasione||0)+1;
+          if (id === "competenza") competenzaDelta += 1; // l'opzione concede +1 Competenza
 
           const nuoviAv = {
             ...av,
@@ -2286,42 +2285,39 @@ export default function App() {
           const completato = nuoveScelte.length >= 2;
           if (completato) {
             // Applica tappa se necessario
-            let competenzaBonus = 0;
             if (isTappa && !tappaFatta) {
-              competenzaBonus = 1;
+              competenzaDelta += 1;
               nuoviAv.tappe = { ...(av.tappe||{}), [tappaKey]: true };
               if ([5, 8].includes(nuovoLv)) {
                 nuoviAv.trattiMarcati = [];
               }
             }
-            const nuovaComp = (pg.competenza||1) + competenzaBonus;
-            updates = {
-              ...updates,
-              livello: nuovoLv,
-              competenza: nuovaComp,
-              avanzamenti: nuoviAv,
-            };
-          } else {
-            updates = { ...updates, avanzamenti: nuoviAv };
+            updates.livello = nuovoLv;
           }
+          updates.avanzamenti = nuoviAv;
+          if (competenzaDelta !== 0) updates.competenza = (pg.competenza||1) + competenzaDelta;
 
           // Applica tutti gli aggiornamenti
           const nuovoPg = { ...pg, ...updates };
           const nuoviPg = personaggi.map(p => p.id === nuovoPg.id ? nuovoPg : p);
           setPersonaggi(nuoviPg);
           salvaSuStorage(nuoviPg);
+          wsSendChar(nuoviPg);
 
           if (completato) setShowAvanzamento(false);
         };
 
         const annullaScelta = (id) => {
-          const nuoveScelte = scelteLiv.filter(s => s !== id);
-          const nuoveCaselle = { ...caselle, [id]: Math.max(0,(caselle[id]||1)-1) };
+          const op = opzioni.find(o => o.id === id);
+          const costo = op?.doppia ? 2 : 1;
+          const nuoveScelte  = scelteLiv.filter(s => s !== id);
+          const nuoveCaselle = { ...caselle, [id]: Math.max(0,(caselle[id]||costo)-costo) };
 
           let updates = {};
-          if (id === "pf")       updates.pf = { ...pg.pf, max: Math.max(0,(pg.pf?.max||0)-1) };
-          if (id === "stress")   updates.stress = { ...pg.stress, max: Math.max(0,(pg.stress?.max||0)-1) };
-          if (id === "evasione") updates.evasione = Math.max(0,(pg.evasione||0)-1);
+          if (id === "pf")         updates.pf = { ...pg.pf, max: Math.max(0,(pg.pf?.max||0)-1) };
+          if (id === "stress")     updates.stress = { ...pg.stress, max: Math.max(0,(pg.stress?.max||0)-1) };
+          if (id === "evasione")   updates.evasione = Math.max(0,(pg.evasione||0)-1);
+          if (id === "competenza") updates.competenza = Math.max(1,(pg.competenza||1)-1);
 
           const nuoviAv = {
             ...av,
@@ -2332,6 +2328,7 @@ export default function App() {
           const nuoviPg = personaggi.map(p => p.id === nuovoPg.id ? nuovoPg : p);
           setPersonaggi(nuoviPg);
           salvaSuStorage(nuoviPg);
+          wsSendChar(nuoviPg);
         };
 
         return (
@@ -2394,7 +2391,8 @@ export default function App() {
                     const piena = opzionePiena(op.id);
                     const scelta = opzioneScelta(op.id);
                     const bloccata = !scelta && scelte2 >= 2;
-                    const disabile = piena || bloccata;
+                    // Un'opzione già scelta resta cliccabile (per annullarla) anche se "piena".
+                    const disabile = (piena && !scelta) || bloccata;
 
                     return (
                       <div key={op.id} style={{
@@ -3043,7 +3041,12 @@ export default function App() {
               const lv = pg.livello || 1;
               const tier = TIER_DA_LIVELLO(lv);
               const armaturaAttuale = pg.armaturaEquip || { n:"Senza armatura", mj:0, sv:0, sc:0, f:"" };
-              const armaturaFiltrate = ARMATURE.filter(a => a.t === tier);
+              // "Senza armatura" (Tier 1) è sempre disponibile, in aggiunta alle armature del tier corrente.
+              const senzaArmatura = ARMATURE.find(a => a.n === "Senza armatura");
+              const armaturaFiltrate = [
+                ...(senzaArmatura ? [senzaArmatura] : []),
+                ...ARMATURE.filter(a => a.t === tier && a.n !== "Senza armatura"),
+              ];
               return (
                 <>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr auto auto", gap:"6px", marginBottom:"6px", fontSize:"0.6rem", letterSpacing:"0.12em", textTransform:"uppercase", color:COLORI.testoSec, borderBottom:`1px solid ${COLORI.bordo}`, paddingBottom:"4px" }}>
@@ -3053,7 +3056,17 @@ export default function App() {
                     value={armaturaAttuale.n}
                     onChange={e => {
                       const trovata = ARMATURE.find(a => a.n === e.target.value);
-                      if (trovata) { aggiorna("armaturaEquip", trovata); aggiorna("armatura", { ...pg.armatura, max: trovata.sc }); }
+                      if (!trovata) return;
+                      setPersonaggi(prev => {
+                        const nuova = prev.map(p => p.id === pgSel ? {
+                          ...p,
+                          armaturaEquip: trovata,
+                          armatura: { ...p.armatura, max: trovata.sc, attuali: Math.min(p.armatura?.attuali||0, trovata.sc) },
+                        } : p);
+                        salvaSuStorage(nuova);
+                        wsSendChar(nuova);
+                        return nuova;
+                      });
                     }}>
                     {armaturaFiltrate.map(a => (
                       <option key={a.n} value={a.n}>{a.n} | {a.mj+lv}/{a.sv+lv} | {a.sc} slot</option>
@@ -3107,7 +3120,7 @@ export default function App() {
 
         </div>
 
-        {/* COLONNA DESTRA */}        {/* COLONNA DESTRA */}
+        {/* COLONNA DESTRA */}
         <div>
           <div style={stili.carta}>
             {/* Tab */}
@@ -3914,15 +3927,6 @@ export default function App() {
             {/* MODAL AVANZAMENTO */}
             {pg.tabAttiva === "note" && (
               <div>
-                <div style={stili.sectionHeader}>Esperienze</div>
-                {(pg.esperienza || ["", "", ""]).map((esp, i) => (
-                  <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "8px", marginBottom: "8px", alignItems: "center" }}>
-                    <input style={stili.input} placeholder={`Esperienza ${i + 1}`} value={esp}
-                      onChange={e => { const arr = [...(pg.esperienza || ["", "", ""])]; arr[i] = e.target.value; aggiorna("esperienza", arr); }} />
-                    <input style={{ ...stili.input, width: "60px" }} type="text"
-                    inputMode="numeric" min="-3" max="5" placeholder="+2" />
-                  </div>
-                ))}
                 <div style={stili.sectionHeader}>Inventario</div>
                 <textarea style={{ ...stili.input, minHeight: "100px", resize: "vertical" }}
                   placeholder="Oggetti, equipaggiamento..."

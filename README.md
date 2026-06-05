@@ -29,12 +29,33 @@ npm run dev
 
 Apri l'indirizzo mostrato in console (di norma `http://localhost:5173`).
 
-## Build di produzione
+## Build di produzione (web)
 
 ```bash
 npm run build      # genera la cartella dist/
 npm run preview    # anteprima locale della build
 ```
+
+## App desktop (Electron)
+
+L'app può essere eseguita e impacchettata come applicazione desktop. La
+persistenza dei personaggi e l'import/export JSON usano il file system tramite
+`window.electronAPI`.
+
+```bash
+npm run electron:dev        # avvia Vite + Electron in sviluppo
+npm run electron:build:win  # genera l'eseguibile Windows (.exe) in release/
+```
+
+### Eseguibile Windows tramite GitHub Actions
+
+Il workflow [`.github/workflows/build-windows.yml`](.github/workflows/build-windows.yml)
+compila l'`.exe` su un runner Windows:
+
+- **Manuale:** GitHub → *Actions* → *Build Windows EXE* → *Run workflow*. Gli
+  `.exe` (installer NSIS e versione portable) sono scaricabili dagli *Artifacts*.
+- **Su tag:** un push di un tag `v*` (es. `v0.1.0`) pubblica automaticamente una
+  *Release* con gli eseguibili allegati.
 
 ## Struttura del progetto
 
@@ -44,6 +65,11 @@ npm run preview    # anteprima locale della build
 ├── vite.config.js        # configurazione Vite
 ├── public/
 │   └── favicon.svg
+├── electron/
+│   ├── main.cjs          # processo principale Electron (finestra, IPC, storage)
+│   └── preload.cjs       # bridge sicuro → window.electronAPI
+├── .github/workflows/
+│   └── build-windows.yml # CI: compila l'eseguibile Windows
 └── src/
     ├── main.jsx          # bootstrap React
     └── App.jsx           # applicazione (componente principale)
